@@ -1,7 +1,8 @@
 use clap::{Parser, Subcommand};
 use gtk4 as gtk;
-use gtk::{Application, ApplicationWindow, Button, Dialog, Entry, Label, MessageType, ButtonsType};
+use gtk::{Application, ApplicationWindow, Button, Entry, Label, AlertDialog};
 use gtk::prelude::*;
+use gtk::gio::Cancellable;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -38,79 +39,99 @@ enum Commands {
 }
 
 fn main() {
-    // Initialize GTK
-    gtk::init().expect("Failed to initialize GTK");
-
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Message { text, level } => {
-            let msg_type = match level.to_lowercase().as_str() {
-                "warning" => MessageType::Warning,
-                "error" => MessageType::Error,
-                _ => MessageType::Info,
-            };
-            let dialog = gtk::MessageDialog::new(
-                None::<&ApplicationWindow>,
-                gtk::DialogFlags::MODAL,
-                msg_type,
-                ButtonsType::Ok,
-                &text,
-            );
-            dialog.set_title("Obsidian Message");
-            dialog.run();
-            dialog.close();
+            let app = Application::new(Some("com.hackerlang.obsidian.message"), Default::default());
+            let level = level.to_lowercase();
+            app.connect_activate(move |app| {
+                let window = ApplicationWindow::new(app);
+                window.set_visible(false);
+                let mut builder = AlertDialog::builder()
+                    .modal(true)
+                    .buttons(vec!["OK"]);
+                if level == "warning" {
+                    builder = builder.message("Warning");
+                } else if level == "error" {
+                    builder = builder.message("Error");
+                } else {
+                    builder = builder.message("Information");
+                }
+                let dialog = builder.detail(&text).build();
+                let window_clone = window.clone();
+                dialog.choose(Some(&window), None::<&Cancellable>, move |_| {
+                    window_clone.close();
+                });
+            });
+            app.run();
         }
         Commands::Input { prompt } => {
             let app = Application::new(Some("com.hackerlang.obsidian"), Default::default());
             let input_received = Arc::new(AtomicBool::new(false));
             let input_text = Arc::new(std::sync::Mutex::new(String::new()));
-
+            let input_received_for_closure = input_received.clone();
+            let input_text_for_closure = input_text.clone();
             app.connect_activate(move |app| {
                 let window = ApplicationWindow::new(app);
                 window.set_title(Some("Obsidian Input"));
                 window.set_default_size(400, 200);
-
                 let vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
                 let label = Label::new(Some(&prompt));
                 let entry = Entry::new();
                 let button = Button::with_label("Submit");
-
-                let input_text_clone = input_text.clone();
-                let input_received_clone = input_received.clone();
+                let input_text_clone = input_text_for_closure.clone();
+                let input_received_clone = input_received_for_closure.clone();
+                let entry_clone = entry.clone();
+                let window_clone = window.clone();
                 button.connect_clicked(move |_| {
-                    let text = entry.text().to_string();
+                    let text = entry_clone.text().to_string();
                     *input_text_clone.lock().unwrap() = text;
                     input_received_clone.store(true, Ordering::SeqCst);
-                    window.close();
+                    window_clone.close();
                 });
-
                 vbox.append(&label);
                 vbox.append(&entry);
                 vbox.append(&button);
                 window.set_child(Some(&vbox));
                 window.present();
             });
-
             app.run();
             if input_received.load(Ordering::SeqCst) {
-                println!("{}", input_text.lock().unwrap());
+                println!("{}", *input_text.lock().unwrap());
             } else {
                 println!("Input cancelled");
             }
         }
         Commands::Confirm { text } => {
-            let dialog = gtk::MessageDialog::new(
-                None::<&ApplicationWindow>,
-                gtk::DialogFlags::MODAL,
-                MessageType::Question,
-                ButtonsType::YesNo,
-                &text,
-            );
-            dialog.set_title("Obsidian Confirm");
-            let response = dialog.run();
-            dialog.close();
-            println!("{}", if response == gtk::ResponseType::Yes { "yes" } else { "no" });
+            let app = Application::new(Some("com.hackerlang.obsidian.confirm"), Default::default());
+            let response_arc = Arc::new(std::sync::Mutex::new(-1i32));
+            let response_clone = response_arc.clone();
+            app.connect_activate(move |app| {
+                let window = ApplicationWindow::new(app);
+                window.set_visible(false);
+                let dialog = AlertDialog::builder()
+                    .modal(true)
+                    .buttons(vec!["No", "Yes"])
+                    .cancel_button(0)
+                    .default_button(1)
+                    .message("Confirmation")
+                    .detail(&text)
+                    .build();
+                let window_clone = window.clone();
+                let response_clone2 = response_clone.clone();
+                dialog.choose(Some(&window), None::<&Cancellable>, move |choice| {
+                    let val = match choice {
+                        Ok(v) => v,
+                        Err(_) => -1,
+                    };
+                    *response_clone2.lock().unwrap() = val;
+                    window_clone.close();
+                });
+            });
+            app.run();
+            let response = *response_arc.lock().unwrap();
+            println!("{}", if response == 1 { "yes" } else { "no" });
         }
     }
 }
