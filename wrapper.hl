@@ -1,0 +1,11 @@
+! Interfejs biblioteki obsidian-lib.so
+
+:message
+  ! Ta funkcja zostanie zmapowana przez kompilator na symbol w .so
+  ! Wymaga to, aby obsidian-lib.so eksportowało funkcję o tej nazwie
+  @call_native_message $1
+:
+
+:input
+  @call_native_input $1
+:
